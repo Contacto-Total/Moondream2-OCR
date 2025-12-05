@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  moondream-ocr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: moondream-ocr-service
+    ports:
+      - "5001:5001"
+    volumes:
+      # Persistir cache del modelo para no descargarlo cada vez
+      - moondream-cache:/root/.cache/huggingface
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TRANSFORMERS_CACHE=/root/.cache/huggingface
+    restart: unless-stopped
+    # Limites de memoria (ajustar segun servidor)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s  # Tiempo para cargar el modelo
+
+volumes:
+  moondream-cache:
+    driver: local
