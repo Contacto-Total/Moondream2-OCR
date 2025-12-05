@@ -5,10 +5,13 @@ python-multipart==0.0.6
 
 # Moondream2 Vision Model
 transformers==4.37.0
-torch==2.1.2
-torchvision==0.16.2
 Pillow==10.2.0
 einops==0.7.0
+
+# PyTorch CPU-only (mucho más ligero, sin CUDA)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.2+cpu
+torchvision==0.16.2+cpu
 
 # Utilities
 python-dotenv==1.0.0
