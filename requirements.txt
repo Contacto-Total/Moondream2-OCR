@@ -4,9 +4,10 @@ uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
 # Moondream2 Vision Model
-transformers==4.37.0
-Pillow==10.2.0
-einops==0.7.0
+transformers>=4.44.0
+Pillow>=10.2.0
+einops>=0.7.0
+accelerate>=0.25.0
 
 # PyTorch CPU-only (mucho más ligero, sin CUDA)
 --extra-index-url https://download.pytorch.org/whl/cpu
