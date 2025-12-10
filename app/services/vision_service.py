@@ -216,42 +216,83 @@ class Florence2Service:
         return self._run_florence(image, "MORE_DETAILED_CAPTION")
 
     def _extract_amount(self, text: str) -> Tuple[Optional[float], Optional[str]]:
-        """Extrae monto y moneda del texto"""
-        patterns = [
-            r'S/\.?\s*([\d,]+\.?\d*)',
-            r'PEN\s*([\d,]+\.?\d*)',
-            r'(?:\$|USD)\s*([\d,]+\.?\d*)',
-            r'([\d,]+\.?\d*)\s*(?:soles|SOLES)',
-            r'[Mm]onto[:\s]+S?/?\\.?\s*([\d,]+\.?\d*)',
-            r'[Tt]otal[:\s]+S?/?\\.?\s*([\d,]+\.?\d*)',
-            r'[Ii]mporte[:\s]+S?/?\\.?\s*([\d,]+\.?\d*)',
-            r'[Pp]agaste\s+S/\s*([\d,]+\.?\d*)',
-            r'[Ee]nviaste\s+S/\s*([\d,]+\.?\d*)',
+        """Extrae monto y moneda del texto - busca el monto más relevante"""
+
+        # Patrones prioritarios (apps de pago y totales)
+        priority_patterns = [
+            r'[Pp]agaste\s+S/\.?\s*([\d,]+\.?\d*)',
+            r'[Ee]nviaste\s+S/\.?\s*([\d,]+\.?\d*)',
+            r'[Rr]ecibiste\s+S/\.?\s*([\d,]+\.?\d*)',
+            r'[Mm]onto\s+S/\.?\s*([\d,]+\.?\d*)',
+            r'[Tt]otal\s*:?\s*S/\.?\s*([\d,]+\.?\d*)',
+            r'[Ii]mporte\s*:?\s*S/\.?\s*([\d,]+\.?\d*)',
+            r'[Vv]alor\s*:?\s*S/\.?\s*([\d,]+\.?\d*)',
+        ]
+
+        # Patrones generales
+        general_patterns = [
+            r'S/\.?\s*([\d,]+\.?\d+)',
+            r'([\d,]+\.?\d+)\s*[Ss]oles',
+            r'PEN\s*([\d,]+\.?\d+)',
         ]
 
         moneda = "PEN"
+        if "$" in text or "USD" in text.upper():
+            moneda = "USD"
 
-        for pattern in patterns:
+        # Primero buscar patrones prioritarios
+        for pattern in priority_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 amount_str = match.group(1).replace(",", "").replace(" ", "")
                 try:
                     amount = float(amount_str)
-                    if "$" in text or "USD" in text.upper():
-                        moneda = "USD"
-                    return amount, moneda
+                    if amount > 0:
+                        return amount, moneda
                 except ValueError:
                     continue
+
+        # Si no hay prioritarios, buscar todos los montos y elegir el más grande
+        all_amounts = []
+        for pattern in general_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match_str in matches:
+                try:
+                    amount_str = match_str.replace(",", "").replace(" ", "")
+                    amount = float(amount_str)
+                    if amount >= 1.0:  # Ignorar decimales sueltos
+                        all_amounts.append(amount)
+                except ValueError:
+                    continue
+
+        if all_amounts:
+            # Elegir el monto más grande (típicamente el total)
+            return max(all_amounts), moneda
 
         return None, None
 
     def _extract_date(self, text: str) -> Optional[str]:
-        """Extrae fecha del texto"""
+        """Extrae fecha del texto - soporta múltiples formatos"""
+
+        # Meses en español para detectar fechas escritas
+        meses = r'(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)'
+
         patterns = [
-            r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            # Formatos con separadores: 10/12/2025, 10-12-2025
+            r'(\d{1,2}[/-]\d{1,2}[/-]\d{4})',
+            r'(\d{1,2}[/-]\d{1,2}[/-]\d{2})',
+            # Formato ISO: 2025-12-10
             r'(\d{4}-\d{2}-\d{2})',
-            r'(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})',
-            r'(\d{1,2}\s+\w+\s+\d{4})',
+            # Formato con mes escrito: 10 de diciembre de 2025, 10 diciembre 2025
+            r'(\d{1,2}\s+de\s+' + meses + r'\s+de\s+\d{4})',
+            r'(\d{1,2}\s+de\s+' + meses + r'\s+\d{4})',
+            r'(\d{1,2}\s+' + meses + r'\s+\d{4})',
+            # Formato: diciembre 10, 2025
+            r'(' + meses + r'\s+\d{1,2},?\s+\d{4})',
+            # Fecha de emisión/operación específica
+            r'[Ff]echa[:\s]+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'[Ff]echa\s+de\s+[Oo]peraci[oó]n[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
+            r'[Ff]echa\s+de\s+[Ee]misi[oó]n[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
         ]
 
         for pattern in patterns:
@@ -264,34 +305,55 @@ class Florence2Service:
     def _extract_operation_number(self, text: str) -> Optional[str]:
         """Extrae numero de operacion del texto"""
         patterns = [
-            r'[Nn][°o]?\s*(?:[Oo]peraci[oó]n|[Tt]ransacci[oó]n)[:\s]*(\d+)',
+            # Patrones específicos con etiqueta
+            r'[Nn][°º]?\s*[Oo]peraci[oó]n[:\s]*(\d+)',
+            r'[Nn][°º]?\s*[Tt]ransacci[oó]n[:\s]*(\d+)',
+            r'[Cc][oó]digo\s+de\s+[Oo]peraci[oó]n[:\s]*(\d+)',
             r'[Rr]eferencia[:\s]*(\d+)',
             r'[Cc][oó]digo[:\s]*(\d+)',
-            r'Op[:\s]*(\d+)',
-            r'Nro[:\s]*(\d+)',
-            r'N[°o]\s*(\d{6,})',
+            r'[Cc]onstancia[:\s]*(\d+)',
+            r'[Cc]omprobante[:\s]*(\d+)',
+            r'Op\.?[:\s]*(\d+)',
+            r'Nro\.?[:\s]*(\d+)',
+            r'N[°º]\s*(\d{6,})',
+            r'ID[:\s]*(\d{6,})',
+            # Números largos que parecen operaciones (8-20 dígitos)
             r'\b(\d{8,20})\b',
         ]
 
         for pattern in patterns:
-            match = re.search(pattern, text)
+            match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                return match.group(1)
+                num = match.group(1)
+                # Ignorar números que parecen DNI (exactamente 8 dígitos empezando con 0-7)
+                if len(num) == 8 and num[0] in '01234567':
+                    continue
+                return num
 
         return None
 
     def _extract_document(self, text: str) -> Optional[str]:
         """Extrae documento/DNI del texto"""
         patterns = [
-            r'(?:DNI|DOC|DOCUMENTO|RUC)[:\s]*(\d{8,11})',
-            r'\b(\d{8})\b',
+            # Patrones específicos con etiqueta
+            r'DNI[:\s]*(\d{8})',
+            r'DOC(?:UMENTO)?[:\s]*(\d{8})',
+            r'RUC[:\s]*(\d{11})',
+            r'[Nn][°º]?\s*[Dd]ocumento[:\s]*(\d{8})',
+            r'[Ii]dentificaci[oó]n[:\s]*(\d{8})',
+            r'[Cc][eé]dula[:\s]*(\d{8,10})',
+            # DNI peruano: 8 dígitos empezando con 0-7
+            r'\b([0-7]\d{7})\b',
         ]
 
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 doc = match.group(1)
-                if len(doc) >= 8:
+                # Validar que sea un documento válido
+                if len(doc) == 8 and doc[0] in '01234567':
+                    return doc
+                elif len(doc) == 11:  # RUC
                     return doc
 
         return None
