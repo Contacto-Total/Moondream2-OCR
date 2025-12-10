@@ -304,8 +304,10 @@ class Florence2Service:
 
     def _extract_operation_number(self, text: str) -> Optional[str]:
         """Extrae numero de operacion del texto"""
+        logger.info(f"Buscando número de operación en: {text[:500]}...")
+
         patterns = [
-            # Patrones específicos con etiqueta
+            # Patrones específicos con etiqueta (prioridad alta)
             r'[Nn][úu]mero\s+de\s+[Oo]peraci[oó]n[:\s]*(\d+)',  # "Número de operación: 123"
             r'[Nn][°º]?\s*[Oo]peraci[oó]n[:\s]*(\d+)',  # "N° Operación: 123"
             r'[Nn][°º]?\s*[Tt]ransacci[oó]n[:\s]*(\d+)',
@@ -320,22 +322,51 @@ class Florence2Service:
             r'Nro\.?[:\s]*(\d+)',
             r'N[°º]\s*(\d{6,})',
             r'ID[:\s]*(\d{6,})',
-            # Números largos que parecen operaciones (10-20 dígitos, más estricto)
-            r'\b(\d{10,20})\b',
+            # Patrones de Yape específicos
+            r'[Oo]p[:\.\s]+(\d{8,})',  # "Op: 12345678" o "Op. 12345678"
+            r'[Nn][\s°\.]*[Oo]p[\s\.]*(\d{6,})',  # "N Op 123456" variantes
+            # Números que siguen a texto común de comprobantes
+            r'(?:yape|plin|transferencia|pago)[^\d]*(\d{8,15})',
+            # Números largos aislados (8-20 dígitos) - última prioridad
+            r'\b(\d{8,20})\b',
         ]
 
-        for pattern in patterns:
+        # Primero buscar patrones con etiqueta explícita (alta confianza)
+        high_confidence_patterns = patterns[:14]  # Los primeros 14 son patrones con etiqueta
+        for pattern in high_confidence_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 num = match.group(1)
-                # Ignorar números que parecen DNI (exactamente 8 dígitos empezando con 0-7)
+                logger.info(f"Patrón alta confianza '{pattern}' encontró: {num}")
+                if len(num) >= 6:
+                    logger.info(f"Número de operación encontrado (alta confianza): {num}")
+                    return num
+
+        # Buscar patrones de baja confianza (números largos sin etiqueta)
+        low_confidence_patterns = patterns[14:]
+        for pattern in low_confidence_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                num = match.group(1)
+                logger.info(f"Patrón baja confianza '{pattern}' encontró: {num}")
+                # Para patrones sin etiqueta, ser más estricto
+                # Ignorar números que parecen DNI SOLO si no hay contexto de operación
                 if len(num) == 8 and num[0] in '01234567':
-                    continue
+                    # Verificar si hay contexto de "operación" cerca del número
+                    context_patterns = ['operaci', 'transac', 'comprobante', 'constancia', 'referencia', 'yape', 'plin']
+                    text_lower = text.lower()
+                    has_context = any(ctx in text_lower for ctx in context_patterns)
+                    if not has_context:
+                        logger.info(f"Ignorando {num} - parece DNI sin contexto de operación")
+                        continue
                 # Ignorar números muy cortos
                 if len(num) < 6:
+                    logger.info(f"Ignorando {num} - muy corto")
                     continue
+                logger.info(f"Número de operación encontrado (baja confianza): {num}")
                 return num
 
+        logger.warning("No se encontró número de operación")
         return None
 
     def _extract_document(self, text: str) -> Optional[str]:
