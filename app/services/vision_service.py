@@ -10,11 +10,23 @@ from typing import Optional, Tuple
 # Crear módulo fake de flash_attn ANTES de importar transformers
 # Florence-2 verifica si flash_attn existe pero no lo necesitamos en CPU
 import types
+from importlib.machinery import ModuleSpec
+
+# Crear módulo principal
 flash_attn_fake = types.ModuleType("flash_attn")
+flash_attn_fake.__spec__ = ModuleSpec("flash_attn", None)
+flash_attn_fake.__version__ = "2.5.0"
 flash_attn_fake.flash_attn_func = lambda *args, **kwargs: None
 flash_attn_fake.flash_attn_varlen_func = lambda *args, **kwargs: None
+
+# Crear submódulo flash_attn_interface
+flash_attn_interface = types.ModuleType("flash_attn.flash_attn_interface")
+flash_attn_interface.__spec__ = ModuleSpec("flash_attn.flash_attn_interface", None)
+flash_attn_interface.flash_attn_func = lambda *args, **kwargs: None
+flash_attn_interface.flash_attn_varlen_func = lambda *args, **kwargs: None
+
 sys.modules["flash_attn"] = flash_attn_fake
-sys.modules["flash_attn.flash_attn_interface"] = flash_attn_fake
+sys.modules["flash_attn.flash_attn_interface"] = flash_attn_interface
 
 from PIL import Image
 import torch
