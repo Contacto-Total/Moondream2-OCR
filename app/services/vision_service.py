@@ -1,10 +1,21 @@
 import re
+import sys
 import time
 import base64
 import logging
 import threading
 from io import BytesIO
 from typing import Optional, Tuple
+
+# Crear módulo fake de flash_attn ANTES de importar transformers
+# Florence-2 verifica si flash_attn existe pero no lo necesitamos en CPU
+import types
+flash_attn_fake = types.ModuleType("flash_attn")
+flash_attn_fake.flash_attn_func = lambda *args, **kwargs: None
+flash_attn_fake.flash_attn_varlen_func = lambda *args, **kwargs: None
+sys.modules["flash_attn"] = flash_attn_fake
+sys.modules["flash_attn.flash_attn_interface"] = flash_attn_fake
+
 from PIL import Image
 import torch
 from transformers import AutoProcessor, AutoModelForCausalLM
