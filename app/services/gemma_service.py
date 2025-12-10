@@ -59,9 +59,13 @@ Extrae la siguiente información y responde ÚNICAMENTE con un JSON válido (sin
 
 REGLAS IMPORTANTES:
 1. El monto puede estar oculto con asteriscos (ej: S/****500.00), extrae solo la parte numérica visible
-2. El número de operación suele ser un código de 8-15 dígitos
+2. El número de operación suele ser un código de 8-15 dígitos, puede tener prefijo como "OP-"
 3. NO confundas números de cuenta o teléfonos con el número de operación
-4. Solo extrae "documento" si dice EXPLÍCITAMENTE "DNI", "DOC", "Documento" o "RUC" seguido del número
+4. DOCUMENTO: Solo extrae si dice EXPLÍCITAMENTE "DNI:", "DOC:", "Documento:", "RUC:" seguido del número.
+   - NO extraer números de cuenta (Nro de Cuenta, Cuenta:, etc.)
+   - NO extraer números de teléfono
+   - NO extraer cualquier número de 8 dígitos sin etiqueta de documento
+   - Si no hay etiqueta clara de DNI/DOC/RUC, pon null
 5. Si no estás seguro de un campo, pon null
 6. Responde SOLO el JSON, nada más"""
 
