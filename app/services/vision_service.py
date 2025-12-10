@@ -227,6 +227,9 @@ class Florence2Service:
             r'[Tt]otal\s*:?\s*S/\.?\s*([\d,]+\.?\d*)',
             r'[Ii]mporte\s*:?\s*S/\.?\s*([\d,]+\.?\d*)',
             r'[Vv]alor\s*:?\s*S/\.?\s*([\d,]+\.?\d*)',
+            # Montos con asteriscos de seguridad: S/********500.00 o S/ ***500.00
+            r'S/\.?\s*\*+\s*([\d,]+\.?\d*)',
+            r'S/\.?\s*[xX\*]+\s*([\d,]+\.?\d*)',
         ]
 
         # Patrones generales
@@ -234,6 +237,8 @@ class Florence2Service:
             r'S/\.?\s*([\d,]+\.?\d+)',
             r'([\d,]+\.?\d+)\s*[Ss]oles',
             r'PEN\s*([\d,]+\.?\d+)',
+            # Montos con asteriscos sin S/ explícito
+            r'\*+\s*([\d,]+\.\d{2})\b',
         ]
 
         moneda = "PEN"
@@ -370,29 +375,35 @@ class Florence2Service:
         return None
 
     def _extract_document(self, text: str) -> Optional[str]:
-        """Extrae documento/DNI del texto"""
-        patterns = [
-            # Patrones específicos con etiqueta
+        """Extrae documento/DNI del texto - SOLO si tiene contexto explícito"""
+        logger.info(f"Buscando documento en texto...")
+
+        # SOLO patrones con etiqueta explícita (alta confianza)
+        # NO extraer números sueltos que parezcan DNI
+        high_confidence_patterns = [
             r'DNI[:\s]*(\d{8})',
             r'DOC(?:UMENTO)?[:\s]*(\d{8})',
             r'RUC[:\s]*(\d{11})',
             r'[Nn][°º]?\s*[Dd]ocumento[:\s]*(\d{8})',
             r'[Ii]dentificaci[oó]n[:\s]*(\d{8})',
             r'[Cc][eé]dula[:\s]*(\d{8,10})',
-            # DNI peruano: 8 dígitos empezando con 0-7
-            r'\b([0-7]\d{7})\b',
+            r'[Tt]itular[:\s]*.*?(\d{8})',  # "Titular: nombre 12345678"
+            r'[Cc]liente[:\s]*.*?(\d{8})',  # "Cliente: nombre 12345678"
         ]
 
-        for pattern in patterns:
+        for pattern in high_confidence_patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 doc = match.group(1)
+                logger.info(f"Documento encontrado con patrón '{pattern}': {doc}")
                 # Validar que sea un documento válido
-                if len(doc) == 8 and doc[0] in '01234567':
+                if len(doc) == 8:
                     return doc
                 elif len(doc) == 11:  # RUC
                     return doc
 
+        # NO buscar números sueltos sin contexto - genera muchos falsos positivos
+        logger.info("No se encontró documento con contexto explícito")
         return None
 
     def _detect_bank(self, text: str) -> Optional[str]:
