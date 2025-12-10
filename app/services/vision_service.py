@@ -2,6 +2,7 @@ import re
 import time
 import base64
 import logging
+import threading
 from io import BytesIO
 from typing import Optional, Tuple
 from PIL import Image
@@ -12,9 +13,12 @@ from app.models.schemas import ExtractedVoucherData, ValidationResult
 
 logger = logging.getLogger(__name__)
 
+# Tiempo en segundos antes de descargar el modelo por inactividad
+UNLOAD_TIMEOUT = 300  # 5 minutos
+
 
 class InternVL2Service:
-    """Servicio para analizar imagenes usando InternVL2-1B"""
+    """Servicio para analizar imagenes usando InternVL2-1B con carga perezosa"""
 
     def __init__(self):
         self.model = None
@@ -22,39 +26,95 @@ class InternVL2Service:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model_id = "OpenGVLab/InternVL2-1B"
         self.model_name = "InternVL2-1B"
+        self._lock = threading.Lock()
+        self._last_used = None
+        self._unload_timer = None
+        self._lazy_mode = True  # Activar carga perezosa
 
     def load_model(self) -> bool:
         """Carga el modelo InternVL2-1B en memoria"""
-        try:
-            logger.info(f"Cargando modelo {self.model_name} en {self.device}...")
-            start_time = time.time()
+        with self._lock:
+            if self.model is not None:
+                return True  # Ya está cargado
 
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_id,
-                trust_remote_code=True
-            )
+            try:
+                logger.info(f"Cargando modelo {self.model_name} en {self.device}...")
+                start_time = time.time()
 
-            self.model = AutoModel.from_pretrained(
-                self.model_id,
-                torch_dtype=torch.float32 if self.device == "cpu" else torch.float16,
-                trust_remote_code=True,
-                low_cpu_mem_usage=True
-            ).eval()
+                self.tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_id,
+                    trust_remote_code=True
+                )
 
-            if self.device == "cuda":
-                self.model = self.model.cuda()
+                self.model = AutoModel.from_pretrained(
+                    self.model_id,
+                    torch_dtype=torch.float32 if self.device == "cpu" else torch.float16,
+                    trust_remote_code=True,
+                    low_cpu_mem_usage=True
+                ).eval()
 
-            load_time = time.time() - start_time
-            logger.info(f"Modelo cargado exitosamente en {load_time:.2f} segundos")
-            return True
+                if self.device == "cuda":
+                    self.model = self.model.cuda()
 
-        except Exception as e:
-            logger.error(f"Error cargando modelo: {str(e)}")
-            return False
+                load_time = time.time() - start_time
+                logger.info(f"Modelo cargado exitosamente en {load_time:.2f} segundos")
+                self._last_used = time.time()
+                self._schedule_unload()
+                return True
+
+            except Exception as e:
+                logger.error(f"Error cargando modelo: {str(e)}")
+                return False
+
+    def unload_model(self) -> None:
+        """Descarga el modelo de memoria para liberar RAM"""
+        with self._lock:
+            if self.model is None:
+                return
+
+            logger.info("Descargando modelo para liberar memoria...")
+            del self.model
+            del self.tokenizer
+            self.model = None
+            self.tokenizer = None
+
+            # Limpiar memoria
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            logger.info("Modelo descargado. RAM liberada.")
+
+    def _schedule_unload(self) -> None:
+        """Programa la descarga del modelo después del timeout"""
+        if self._unload_timer:
+            self._unload_timer.cancel()
+
+        self._unload_timer = threading.Timer(UNLOAD_TIMEOUT, self._check_and_unload)
+        self._unload_timer.daemon = True
+        self._unload_timer.start()
+
+    def _check_and_unload(self) -> None:
+        """Verifica si debe descargar el modelo por inactividad"""
+        if self._last_used and (time.time() - self._last_used) >= UNLOAD_TIMEOUT:
+            self.unload_model()
+
+    def _ensure_loaded(self) -> bool:
+        """Asegura que el modelo esté cargado (carga perezosa)"""
+        if not self.is_loaded():
+            return self.load_model()
+        self._last_used = time.time()
+        self._schedule_unload()
+        return True
 
     def is_loaded(self) -> bool:
         """Verifica si el modelo esta cargado"""
         return self.model is not None and self.tokenizer is not None
+
+    def is_lazy_mode(self) -> bool:
+        """Verifica si está en modo lazy loading"""
+        return self._lazy_mode
 
     def _decode_base64_image(self, base64_string: str) -> Image.Image:
         """Decodifica una imagen en base64 a PIL Image"""
@@ -248,6 +308,10 @@ class InternVL2Service:
             Tuple con: datos extraidos, validacion monto, validacion documento, tiempo en ms
         """
         start_time = time.time()
+
+        # Carga perezosa - cargar modelo solo cuando se necesita
+        if not self._ensure_loaded():
+            raise Exception("No se pudo cargar el modelo")
 
         try:
             image = self._decode_base64_image(image_base64)
