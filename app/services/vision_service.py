@@ -153,7 +153,7 @@ class Florence2Service:
                     input_ids=inputs["input_ids"],
                     pixel_values=inputs[pixel_key],
                     max_new_tokens=1024,
-                    num_beams=3,
+                    num_beams=1,  # Florence-2 tiene bug con num_beams > 1
                     do_sample=False
                 )
 
