@@ -19,6 +19,8 @@ python-dotenv==1.0.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 aiofiles>=23.2.1
+einops>=0.7.0
+numpy<2
 
 # For better tokenization
 tiktoken>=0.5.0
