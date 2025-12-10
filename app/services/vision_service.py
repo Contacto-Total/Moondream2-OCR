@@ -46,11 +46,16 @@ class Florence2Service:
                     trust_remote_code=True
                 )
 
+                # Desactivar flash attention para CPU
+                import os
+                os.environ["TRANSFORMERS_NO_FLASH_ATTENTION"] = "1"
+
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_id,
                     torch_dtype=torch.float32,
                     trust_remote_code=True,
-                    attn_implementation="eager"  # Desactivar SDPA para compatibilidad
+                    attn_implementation="eager",
+                    _attn_implementation="eager"
                 ).eval()
 
                 load_time = time.time() - start_time
