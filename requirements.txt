@@ -17,3 +17,6 @@ torchvision==0.17.0+cpu
 # Utilities
 pydantic>=2.5.0
 numpy<2
+
+# Google AI (Gemma) for intelligent text analysis
+google-generativeai>=0.8.0

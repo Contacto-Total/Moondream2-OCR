@@ -33,8 +33,12 @@ import torch
 from transformers import AutoProcessor, AutoModelForCausalLM
 
 from app.models.schemas import ExtractedVoucherData, ValidationResult
+from app.services.gemma_service import gemma_service
 
 logger = logging.getLogger(__name__)
+
+# Flag para usar Gemma para análisis inteligente (recomendado)
+USE_GEMMA_ANALYSIS = True
 
 # Tiempo en segundos antes de descargar el modelo por inactividad
 UNLOAD_TIMEOUT = 300  # 5 minutos
@@ -450,7 +454,7 @@ class Florence2Service:
         try:
             image = self._decode_base64_image(image_base64)
 
-            # Extraer texto con OCR
+            # Extraer texto con OCR (Florence-2)
             ocr_text = self._extract_text_ocr(image)
             logger.info(f"OCR extraído: {ocr_text}")
 
@@ -459,14 +463,31 @@ class Florence2Service:
             logger.info(f"Caption: {caption}")
 
             # Combinar textos para análisis
-            combined_text = f"{ocr_text} {caption}"
+            combined_text = f"{ocr_text}\n\nDescripción de imagen: {caption}"
 
-            # Extraer datos estructurados
-            monto, moneda = self._extract_amount(combined_text)
-            fecha = self._extract_date(combined_text)
-            numero_operacion = self._extract_operation_number(combined_text)
-            banco = self._detect_bank(combined_text)
-            documento = self._extract_document(combined_text)
+            # ============================================
+            # ANÁLISIS CON GEMMA (IA que entiende contexto)
+            # ============================================
+            if USE_GEMMA_ANALYSIS:
+                logger.info("Usando Gemma para análisis inteligente...")
+                gemma_result = gemma_service.analyze_voucher_text(combined_text)
+
+                monto = gemma_result.get("monto")
+                moneda = gemma_result.get("moneda", "PEN")
+                fecha = gemma_result.get("fecha")
+                numero_operacion = gemma_result.get("numero_operacion")
+                banco = gemma_result.get("banco")
+                documento = gemma_result.get("documento")
+
+                logger.info(f"Gemma extrajo: monto={monto}, banco={banco}, op={numero_operacion}, doc={documento}")
+            else:
+                # Fallback: usar regex (menos preciso)
+                logger.info("Usando regex para extracción (fallback)...")
+                monto, moneda = self._extract_amount(combined_text)
+                fecha = self._extract_date(combined_text)
+                numero_operacion = self._extract_operation_number(combined_text)
+                banco = self._detect_bank(combined_text)
+                documento = self._extract_document(combined_text)
 
             processing_time = int((time.time() - start_time) * 1000)
 
@@ -494,6 +515,8 @@ class Florence2Service:
 
         except Exception as e:
             logger.error(f"Error analizando voucher: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             processing_time = int((time.time() - start_time) * 1000)
             return ExtractedVoucherData(texto_completo=f"Error: {str(e)}"), None, None, processing_time
 
