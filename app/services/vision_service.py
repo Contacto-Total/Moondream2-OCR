@@ -306,19 +306,22 @@ class Florence2Service:
         """Extrae numero de operacion del texto"""
         patterns = [
             # Patrones específicos con etiqueta
-            r'[Nn][°º]?\s*[Oo]peraci[oó]n[:\s]*(\d+)',
+            r'[Nn][úu]mero\s+de\s+[Oo]peraci[oó]n[:\s]*(\d+)',  # "Número de operación: 123"
+            r'[Nn][°º]?\s*[Oo]peraci[oó]n[:\s]*(\d+)',  # "N° Operación: 123"
             r'[Nn][°º]?\s*[Tt]ransacci[oó]n[:\s]*(\d+)',
             r'[Cc][oó]digo\s+de\s+[Oo]peraci[oó]n[:\s]*(\d+)',
+            r'[Oo]peraci[oó]n[:\s]*[Nn][°º]?\s*(\d+)',  # "Operación N°: 123"
+            r'[Oo]peraci[oó]n[:\s]+(\d+)',  # "Operación: 123" o "Operación 123"
             r'[Rr]eferencia[:\s]*(\d+)',
             r'[Cc][oó]digo[:\s]*(\d+)',
-            r'[Cc]onstancia[:\s]*(\d+)',
+            r'[Cc]onstancia[:\s]*[Nn]?[°º]?\s*(\d+)',  # "Constancia N°: 123"
             r'[Cc]omprobante[:\s]*(\d+)',
             r'Op\.?[:\s]*(\d+)',
             r'Nro\.?[:\s]*(\d+)',
             r'N[°º]\s*(\d{6,})',
             r'ID[:\s]*(\d{6,})',
-            # Números largos que parecen operaciones (8-20 dígitos)
-            r'\b(\d{8,20})\b',
+            # Números largos que parecen operaciones (10-20 dígitos, más estricto)
+            r'\b(\d{10,20})\b',
         ]
 
         for pattern in patterns:
@@ -327,6 +330,9 @@ class Florence2Service:
                 num = match.group(1)
                 # Ignorar números que parecen DNI (exactamente 8 dígitos empezando con 0-7)
                 if len(num) == 8 and num[0] in '01234567':
+                    continue
+                # Ignorar números muy cortos
+                if len(num) < 6:
                     continue
                 return num
 
