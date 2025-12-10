@@ -438,13 +438,14 @@ class Florence2Service:
         image_base64: str,
         expected_amount: Optional[float] = None,
         expected_document: Optional[str] = None,
+        expected_name: Optional[str] = None,
         custom_prompt: Optional[str] = None
-    ) -> Tuple[ExtractedVoucherData, Optional[ValidationResult], Optional[ValidationResult], int]:
+    ) -> Tuple[ExtractedVoucherData, Optional[ValidationResult], Optional[ValidationResult], Optional[ValidationResult], int]:
         """
         Analiza un voucher/boleta de pago
 
         Returns:
-            Tuple con: datos extraidos, validacion monto, validacion documento, tiempo en ms
+            Tuple con: datos extraidos, validacion monto, validacion documento, validacion nombre, tiempo en ms
         """
         start_time = time.time()
 
@@ -478,8 +479,9 @@ class Florence2Service:
                 numero_operacion = gemma_result.get("numero_operacion")
                 banco = gemma_result.get("banco")
                 documento = gemma_result.get("documento")
+                nombre = gemma_result.get("nombre")
 
-                logger.info(f"Gemma extrajo: monto={monto}, banco={banco}, op={numero_operacion}, doc={documento}")
+                logger.info(f"Gemma extrajo: monto={monto}, banco={banco}, op={numero_operacion}, doc={documento}, nombre={nombre}")
             else:
                 # Fallback: usar regex (menos preciso)
                 logger.info("Usando regex para extracción (fallback)...")
@@ -488,6 +490,7 @@ class Florence2Service:
                 numero_operacion = self._extract_operation_number(combined_text)
                 banco = self._detect_bank(combined_text)
                 documento = self._extract_document(combined_text)
+                nombre = None  # No hay extracción de nombre por regex
 
             processing_time = int((time.time() - start_time) * 1000)
 
@@ -498,6 +501,7 @@ class Florence2Service:
                 numero_operacion=numero_operacion,
                 banco=banco,
                 documento=documento,
+                nombre=nombre,
                 texto_completo=ocr_text
             )
 
@@ -511,14 +515,19 @@ class Florence2Service:
             if expected_document is not None and documento is not None:
                 validacion_documento = self._validate_document(expected_document, documento)
 
-            return data, validacion_monto, validacion_documento, processing_time
+            # Validar nombre si se proporcionó
+            validacion_nombre = None
+            if expected_name is not None and nombre is not None:
+                validacion_nombre = self._validate_name(expected_name, nombre)
+
+            return data, validacion_monto, validacion_documento, validacion_nombre, processing_time
 
         except Exception as e:
             logger.error(f"Error analizando voucher: {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
             processing_time = int((time.time() - start_time) * 1000)
-            return ExtractedVoucherData(texto_completo=f"Error: {str(e)}"), None, None, processing_time
+            return ExtractedVoucherData(texto_completo=f"Error: {str(e)}"), None, None, None, processing_time
 
     def _validate_amount(self, expected: float, extracted: float) -> ValidationResult:
         """Valida si el monto extraído coincide con el esperado"""
@@ -553,6 +562,60 @@ class Florence2Service:
             valor_esperado=expected,
             valor_extraido=extracted,
             mensaje="El documento coincide" if matches else "El documento NO coincide"
+        )
+
+    def _validate_name(self, expected: str, extracted: str) -> ValidationResult:
+        """Valida si el nombre extraído coincide con el esperado"""
+        # Normalizar nombres: minúsculas, sin acentos, sin espacios extras
+        import unicodedata
+
+        def normalize_name(name: str) -> str:
+            # Convertir a minúsculas
+            name = name.lower().strip()
+            # Quitar acentos
+            name = unicodedata.normalize('NFD', name)
+            name = ''.join(c for c in name if unicodedata.category(c) != 'Mn')
+            # Quitar espacios múltiples
+            name = ' '.join(name.split())
+            return name
+
+        expected_norm = normalize_name(expected)
+        extracted_norm = normalize_name(extracted)
+
+        # Coincidencia exacta
+        if expected_norm == extracted_norm:
+            return ValidationResult(
+                coincide=True,
+                valor_esperado=expected,
+                valor_extraido=extracted,
+                mensaje="El nombre coincide exactamente"
+            )
+
+        # Coincidencia parcial: verificar si uno contiene al otro
+        # o si las palabras principales coinciden
+        expected_words = set(expected_norm.split())
+        extracted_words = set(extracted_norm.split())
+
+        # Quitar palabras comunes que no son significativas
+        common_words = {'de', 'del', 'la', 'los', 'las', 'el', 'y', 'a'}
+        expected_significant = expected_words - common_words
+        extracted_significant = extracted_words - common_words
+
+        # Si hay intersección significativa (al menos 2 palabras o 50%)
+        intersection = expected_significant & extracted_significant
+        if len(intersection) >= 2 or (len(expected_significant) > 0 and len(intersection) / len(expected_significant) >= 0.5):
+            return ValidationResult(
+                coincide=True,
+                valor_esperado=expected,
+                valor_extraido=extracted,
+                mensaje=f"El nombre coincide parcialmente ({len(intersection)} palabras comunes)"
+            )
+
+        return ValidationResult(
+            coincide=False,
+            valor_esperado=expected,
+            valor_extraido=extracted,
+            mensaje="El nombre NO coincide"
         )
 
 

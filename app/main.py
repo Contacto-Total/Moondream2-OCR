@@ -79,6 +79,7 @@ async def analyze_voucher_base64(request: VoucherAnalysisRequest):
     - **image_base64**: Imagen del voucher en formato base64
     - **expected_amount**: (Opcional) Monto esperado para validar
     - **expected_document**: (Opcional) Documento esperado para validar
+    - **expected_name**: (Opcional) Nombre esperado para validar
     - **custom_prompt**: (Opcional) Prompt personalizado
 
     Nota: El modelo se carga automáticamente en la primera solicitud (lazy loading).
@@ -88,10 +89,11 @@ async def analyze_voucher_base64(request: VoucherAnalysisRequest):
         raise HTTPException(status_code=400, detail="Se requiere image_base64")
 
     try:
-        data, validacion_monto, validacion_documento, processing_time = vision_service.analyze_voucher(
+        data, validacion_monto, validacion_documento, validacion_nombre, processing_time = vision_service.analyze_voucher(
             request.image_base64,
             request.expected_amount,
             request.expected_document,
+            request.expected_name,
             request.custom_prompt
         )
 
@@ -100,6 +102,7 @@ async def analyze_voucher_base64(request: VoucherAnalysisRequest):
             data=data,
             validacion_monto=validacion_monto,
             validacion_documento=validacion_documento,
+            validacion_nombre=validacion_nombre,
             processing_time_ms=processing_time
         )
 
@@ -116,6 +119,7 @@ async def analyze_voucher_upload(
     file: UploadFile = File(..., description="Imagen del voucher"),
     expected_amount: Optional[float] = Form(None, description="Monto esperado para validar"),
     expected_document: Optional[str] = Form(None, description="Documento esperado para validar"),
+    expected_name: Optional[str] = Form(None, description="Nombre esperado para validar"),
     custom_prompt: Optional[str] = Form(None, description="Prompt personalizado")
 ):
     """
@@ -124,6 +128,7 @@ async def analyze_voucher_upload(
     - **file**: Archivo de imagen (JPG, PNG, etc.)
     - **expected_amount**: (Opcional) Monto esperado para validar
     - **expected_document**: (Opcional) Documento esperado para validar
+    - **expected_name**: (Opcional) Nombre esperado para validar
 
     Nota: El modelo se carga automáticamente en la primera solicitud (lazy loading).
     """
@@ -138,10 +143,11 @@ async def analyze_voucher_upload(
         contents = await file.read()
         image_base64 = base64.b64encode(contents).decode("utf-8")
 
-        data, validacion_monto, validacion_documento, processing_time = vision_service.analyze_voucher(
+        data, validacion_monto, validacion_documento, validacion_nombre, processing_time = vision_service.analyze_voucher(
             image_base64,
             expected_amount,
             expected_document,
+            expected_name,
             custom_prompt
         )
 
@@ -150,6 +156,7 @@ async def analyze_voucher_upload(
             data=data,
             validacion_monto=validacion_monto,
             validacion_documento=validacion_documento,
+            validacion_nombre=validacion_nombre,
             processing_time_ms=processing_time
         )
 

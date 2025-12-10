@@ -7,6 +7,7 @@ class VoucherAnalysisRequest(BaseModel):
     image_base64: Optional[str] = Field(None, description="Imagen en base64")
     expected_amount: Optional[float] = Field(None, description="Monto esperado para validar")
     expected_document: Optional[str] = Field(None, description="Documento esperado para validar")
+    expected_name: Optional[str] = Field(None, description="Nombre esperado para validar")
     custom_prompt: Optional[str] = Field(None, description="Prompt personalizado (opcional)")
 
 
@@ -18,6 +19,7 @@ class ExtractedVoucherData(BaseModel):
     numero_operacion: Optional[str] = Field(None, description="Numero de operacion/referencia")
     banco: Optional[str] = Field(None, description="Banco o entidad financiera")
     documento: Optional[str] = Field(None, description="Documento/DNI del pagador")
+    nombre: Optional[str] = Field(None, description="Nombre del beneficiario/destinatario")
     texto_completo: Optional[str] = Field(None, description="Respuesta completa del modelo")
 
 
@@ -36,6 +38,7 @@ class VoucherAnalysisResponse(BaseModel):
     data: Optional[ExtractedVoucherData] = Field(None, description="Datos extraidos")
     validacion_monto: Optional[ValidationResult] = Field(None, description="Resultado de validacion de monto")
     validacion_documento: Optional[ValidationResult] = Field(None, description="Resultado de validacion de documento")
+    validacion_nombre: Optional[ValidationResult] = Field(None, description="Resultado de validacion de nombre")
     error: Optional[str] = Field(None, description="Mensaje de error si fallo")
     processing_time_ms: Optional[int] = Field(None, description="Tiempo de procesamiento en ms")
 

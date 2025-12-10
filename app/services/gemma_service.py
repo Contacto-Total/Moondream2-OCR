@@ -54,7 +54,8 @@ Extrae la siguiente información y responde ÚNICAMENTE con un JSON válido (sin
     "fecha": "<fecha en el formato que aparezca, o null>",
     "numero_operacion": "<número de operación/transacción/referencia, o null>",
     "banco": "<banco o app: Yape, Plin, BCP, BBVA, Interbank, Scotiabank, etc., o null>",
-    "documento": "<DNI o RUC SOLO si aparece con etiqueta explícita como 'DNI:', 'DOC:', 'RUC:', o null>"
+    "documento": "<DNI o RUC SOLO si aparece con etiqueta explícita como 'DNI:', 'DOC:', 'RUC:', o null>",
+    "nombre": "<nombre del beneficiario/destinatario del pago, o null>"
 }}
 
 REGLAS IMPORTANTES:
@@ -66,8 +67,11 @@ REGLAS IMPORTANTES:
    - NO extraer números de teléfono
    - NO extraer cualquier número de 8 dígitos sin etiqueta de documento
    - Si no hay etiqueta clara de DNI/DOC/RUC, pon null
-5. Si no estás seguro de un campo, pon null
-6. Responde SOLO el JSON, nada más"""
+5. NOMBRE: Extrae el nombre del beneficiario/destinatario si aparece.
+   - Puede decir "Para:", "Destinatario:", "Beneficiario:", "A nombre de:", o simplemente un nombre propio
+   - Extrae solo el nombre de la persona, no el del banco o empresa
+6. Si no estás seguro de un campo, pon null
+7. Responde SOLO el JSON, nada más"""
 
         try:
             logger.info(f"Enviando texto a Gemma para análisis ({len(ocr_text)} chars)...")
