@@ -49,7 +49,8 @@ class Florence2Service:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_id,
                     torch_dtype=torch.float32,
-                    trust_remote_code=True
+                    trust_remote_code=True,
+                    attn_implementation="eager"  # Desactivar SDPA para compatibilidad
                 ).eval()
 
                 load_time = time.time() - start_time
@@ -127,16 +128,30 @@ class Florence2Service:
         try:
             prompt = f"<{task}>" if not text_input else f"<{task}>{text_input}"
 
+            # Asegurar que la imagen esté en RGB
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+
             inputs = self.processor(
                 text=prompt,
                 images=image,
                 return_tensors="pt"
             )
 
+            # Debug: ver qué keys tiene inputs
+            logger.info(f"Inputs keys: {inputs.keys()}")
+
+            # Manejar diferentes nombres de keys según la versión
+            pixel_key = "pixel_values" if "pixel_values" in inputs else "flattened_patches"
+
+            if pixel_key not in inputs or inputs[pixel_key] is None:
+                logger.error(f"No se encontró pixel_values en inputs. Keys disponibles: {list(inputs.keys())}")
+                return ""
+
             with torch.no_grad():
                 generated_ids = self.model.generate(
                     input_ids=inputs["input_ids"],
-                    pixel_values=inputs["pixel_values"],
+                    pixel_values=inputs[pixel_key],
                     max_new_tokens=1024,
                     num_beams=3,
                     do_sample=False
@@ -154,10 +169,14 @@ class Florence2Service:
                 image_size=(image.width, image.height)
             )
 
-            return parsed.get(f"<{task}>", str(parsed))
+            result = parsed.get(f"<{task}>", str(parsed))
+            logger.info(f"Florence result for {task}: {result[:200] if result else 'empty'}")
+            return result
 
         except Exception as e:
             logger.error(f"Error en Florence-2: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return ""
 
     def _extract_text_ocr(self, image: Image.Image) -> str:
