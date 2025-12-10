@@ -3,24 +3,17 @@ fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
-# InternVL2-1B Vision Model
-transformers>=4.37.0
+# Florence-2 Vision Model (lightweight ~1GB)
+transformers>=4.38.0
 timm>=0.9.0
-sentencepiece>=0.1.99
+einops>=0.7.0
 Pillow>=10.2.0
 
-# PyTorch CPU-only (ligero, sin CUDA)
+# PyTorch CPU-only
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.0+cpu
 torchvision==0.17.0+cpu
 
 # Utilities
-python-dotenv==1.0.0
 pydantic>=2.5.0
-pydantic-settings>=2.1.0
-aiofiles>=23.2.1
-einops>=0.7.0
 numpy<2
-
-# For better tokenization
-tiktoken>=0.5.0

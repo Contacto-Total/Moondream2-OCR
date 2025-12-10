@@ -7,7 +7,7 @@ from io import BytesIO
 from typing import Optional, Tuple
 from PIL import Image
 import torch
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoProcessor, AutoModelForCausalLM
 
 from app.models.schemas import ExtractedVoucherData, ValidationResult
 
@@ -17,44 +17,40 @@ logger = logging.getLogger(__name__)
 UNLOAD_TIMEOUT = 300  # 5 minutos
 
 
-class InternVL2Service:
-    """Servicio para analizar imagenes usando InternVL2-1B con carga perezosa"""
+class Florence2Service:
+    """Servicio para analizar imagenes usando Florence-2-base (~1GB RAM)"""
 
     def __init__(self):
         self.model = None
-        self.tokenizer = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model_id = "OpenGVLab/InternVL2-1B"
-        self.model_name = "InternVL2-1B"
+        self.processor = None
+        self.device = "cpu"  # Florence-2 funciona bien en CPU
+        self.model_id = "microsoft/Florence-2-base"
+        self.model_name = "Florence-2-base"
         self._lock = threading.Lock()
         self._last_used = None
         self._unload_timer = None
-        self._lazy_mode = True  # Activar carga perezosa
+        self._lazy_mode = True
 
     def load_model(self) -> bool:
-        """Carga el modelo InternVL2-1B en memoria"""
+        """Carga el modelo Florence-2-base en memoria"""
         with self._lock:
             if self.model is not None:
-                return True  # Ya está cargado
+                return True
 
             try:
-                logger.info(f"Cargando modelo {self.model_name} en {self.device}...")
+                logger.info(f"Cargando modelo {self.model_name}...")
                 start_time = time.time()
 
-                self.tokenizer = AutoTokenizer.from_pretrained(
+                self.processor = AutoProcessor.from_pretrained(
                     self.model_id,
                     trust_remote_code=True
                 )
 
-                self.model = AutoModel.from_pretrained(
+                self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_id,
-                    torch_dtype=torch.float32 if self.device == "cpu" else torch.float16,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True
+                    torch_dtype=torch.float32,
+                    trust_remote_code=True
                 ).eval()
-
-                if self.device == "cuda":
-                    self.model = self.model.cuda()
 
                 load_time = time.time() - start_time
                 logger.info(f"Modelo cargado exitosamente en {load_time:.2f} segundos")
@@ -74,15 +70,12 @@ class InternVL2Service:
 
             logger.info("Descargando modelo para liberar memoria...")
             del self.model
-            del self.tokenizer
+            del self.processor
             self.model = None
-            self.tokenizer = None
+            self.processor = None
 
-            # Limpiar memoria
             import gc
             gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
             logger.info("Modelo descargado. RAM liberada.")
 
@@ -110,7 +103,7 @@ class InternVL2Service:
 
     def is_loaded(self) -> bool:
         """Verifica si el modelo esta cargado"""
-        return self.model is not None and self.tokenizer is not None
+        return self.model is not None and self.processor is not None
 
     def is_lazy_mode(self) -> bool:
         """Verifica si está en modo lazy loading"""
@@ -129,91 +122,64 @@ class InternVL2Service:
 
         return image
 
-    def _chat(self, image: Image.Image, question: str) -> str:
-        """Hace una pregunta al modelo sobre la imagen"""
+    def _run_florence(self, image: Image.Image, task: str, text_input: str = "") -> str:
+        """Ejecuta Florence-2 con una tarea específica"""
         try:
-            # Preparar imagen para el modelo
-            pixel_values = self._process_image(image)
+            prompt = f"<{task}>" if not text_input else f"<{task}>{text_input}"
 
-            # Generar respuesta usando el método chat del modelo
-            generation_config = dict(max_new_tokens=512, do_sample=False)
-
-            response = self.model.chat(
-                self.tokenizer,
-                pixel_values,
-                question,
-                generation_config
+            inputs = self.processor(
+                text=prompt,
+                images=image,
+                return_tensors="pt"
             )
 
-            return response.strip()
-        except Exception as e:
-            logger.error(f"Error en chat: {str(e)}")
-            # Fallback: intentar método alternativo
-            return self._chat_fallback(image, question)
-
-    def _process_image(self, image: Image.Image):
-        """Procesa la imagen para el modelo"""
-        # Redimensionar si es muy grande
-        max_size = 1024
-        if max(image.size) > max_size:
-            ratio = max_size / max(image.size)
-            new_size = (int(image.size[0] * ratio), int(image.size[1] * ratio))
-            image = image.resize(new_size, Image.LANCZOS)
-
-        # Usar el procesador del modelo si está disponible
-        if hasattr(self.model, 'process_images'):
-            return self.model.process_images([image], self.model.config)
-
-        # Fallback: procesar manualmente
-        from torchvision import transforms
-        transform = transforms.Compose([
-            transforms.Resize((448, 448)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-        pixel_values = transform(image).unsqueeze(0)
-
-        if self.device == "cuda":
-            pixel_values = pixel_values.cuda()
-
-        return pixel_values
-
-    def _chat_fallback(self, image: Image.Image, question: str) -> str:
-        """Método alternativo si el chat principal falla"""
-        try:
-            pixel_values = self._process_image(image)
-
-            # Construir prompt
-            prompt = f"<image>\n{question}"
-
-            inputs = self.tokenizer(prompt, return_tensors="pt")
-            if self.device == "cuda":
-                inputs = {k: v.cuda() for k, v in inputs.items()}
-
             with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    pixel_values=pixel_values,
-                    max_new_tokens=512,
+                generated_ids = self.model.generate(
+                    input_ids=inputs["input_ids"],
+                    pixel_values=inputs["pixel_values"],
+                    max_new_tokens=1024,
+                    num_beams=3,
                     do_sample=False
                 )
 
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            return response.strip()
+            generated_text = self.processor.batch_decode(
+                generated_ids,
+                skip_special_tokens=False
+            )[0]
+
+            # Parsear respuesta de Florence
+            parsed = self.processor.post_process_generation(
+                generated_text,
+                task=f"<{task}>",
+                image_size=(image.width, image.height)
+            )
+
+            return parsed.get(f"<{task}>", str(parsed))
+
         except Exception as e:
-            logger.error(f"Error en fallback: {str(e)}")
-            return f"Error: {str(e)}"
+            logger.error(f"Error en Florence-2: {str(e)}")
+            return ""
+
+    def _extract_text_ocr(self, image: Image.Image) -> str:
+        """Extrae todo el texto de la imagen usando OCR"""
+        return self._run_florence(image, "OCR")
+
+    def _get_detailed_caption(self, image: Image.Image) -> str:
+        """Obtiene una descripción detallada de la imagen"""
+        return self._run_florence(image, "MORE_DETAILED_CAPTION")
 
     def _extract_amount(self, text: str) -> Tuple[Optional[float], Optional[str]]:
         """Extrae monto y moneda del texto"""
         patterns = [
-            r'S/\.?\s*(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?)',
-            r'PEN\s*(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?)',
-            r'(?:\$|USD)\s*(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?)',
-            r'(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?)\s*(?:soles|SOLES)',
-            r'[Mm]onto[:\s]+S?/?\.?\s*(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?)',
-            r'[Tt]otal[:\s]+S?/?\.?\s*(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?)',
-            r'[Ii]mporte[:\s]+S?/?\.?\s*(\d{1,3}(?:[,\s]?\d{3})*(?:\.\d{2})?)',
+            r'S/\.?\s*([\d,]+\.?\d*)',
+            r'PEN\s*([\d,]+\.?\d*)',
+            r'(?:\$|USD)\s*([\d,]+\.?\d*)',
+            r'([\d,]+\.?\d*)\s*(?:soles|SOLES)',
+            r'[Mm]onto[:\s]+S?/?\\.?\s*([\d,]+\.?\d*)',
+            r'[Tt]otal[:\s]+S?/?\\.?\s*([\d,]+\.?\d*)',
+            r'[Ii]mporte[:\s]+S?/?\\.?\s*([\d,]+\.?\d*)',
+            r'[Pp]agaste\s+S/\s*([\d,]+\.?\d*)',
+            r'[Ee]nviaste\s+S/\s*([\d,]+\.?\d*)',
         ]
 
         moneda = "PEN"
@@ -238,6 +204,7 @@ class InternVL2Service:
             r'(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})',
             r'(\d{4}-\d{2}-\d{2})',
             r'(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})',
+            r'(\d{1,2}\s+\w+\s+\d{4})',
         ]
 
         for pattern in patterns:
@@ -255,6 +222,7 @@ class InternVL2Service:
             r'[Cc][oó]digo[:\s]*(\d+)',
             r'Op[:\s]*(\d+)',
             r'Nro[:\s]*(\d+)',
+            r'N[°o]\s*(\d{6,})',
             r'\b(\d{8,20})\b',
         ]
 
@@ -269,28 +237,38 @@ class InternVL2Service:
         """Extrae documento/DNI del texto"""
         patterns = [
             r'(?:DNI|DOC|DOCUMENTO|RUC)[:\s]*(\d{8,11})',
-            r'\b(\d{8})\b',  # DNI peruano
+            r'\b(\d{8})\b',
         ]
 
         for pattern in patterns:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
-                return match.group(1)
+                doc = match.group(1)
+                if len(doc) >= 8:
+                    return doc
 
         return None
 
     def _detect_bank(self, text: str) -> Optional[str]:
         """Detecta el banco del texto"""
         banks = [
-            "BCP", "BBVA", "Interbank", "Scotiabank", "BanBif",
-            "Banco de la Nacion", "Banco de Credito", "Yape", "Plin",
-            "Banco Continental", "Caja", "Financiera"
+            ("YAPE", "Yape"),
+            ("PLIN", "Plin"),
+            ("BCP", "BCP"),
+            ("BBVA", "BBVA"),
+            ("INTERBANK", "Interbank"),
+            ("SCOTIABANK", "Scotiabank"),
+            ("BANBIF", "BanBif"),
+            ("BANCO DE LA NACION", "Banco de la Nacion"),
+            ("BANCO DE CREDITO", "BCP"),
+            ("NEQUI", "Nequi"),
+            ("TUNKI", "Tunki"),
         ]
 
         text_upper = text.upper()
-        for bank in banks:
-            if bank.upper() in text_upper:
-                return bank
+        for keyword, bank_name in banks:
+            if keyword in text_upper:
+                return bank_name
 
         return None
 
@@ -309,43 +287,29 @@ class InternVL2Service:
         """
         start_time = time.time()
 
-        # Carga perezosa - cargar modelo solo cuando se necesita
         if not self._ensure_loaded():
             raise Exception("No se pudo cargar el modelo")
 
         try:
             image = self._decode_base64_image(image_base64)
 
-            # Prompt para extraer informacion del voucher
-            if custom_prompt:
-                prompt = custom_prompt
-            else:
-                prompt = """Analiza esta imagen de un comprobante/voucher de pago y extrae la siguiente información:
-1. Monto total (incluye el símbolo de moneda)
-2. Fecha de la transacción
-3. Número de operación o referencia
-4. Nombre del banco o servicio (Yape, Plin, BCP, etc.)
-5. DNI o documento del pagador si aparece
+            # Extraer texto con OCR
+            ocr_text = self._extract_text_ocr(image)
+            logger.info(f"OCR extraído: {ocr_text}")
 
-Responde de forma estructurada con cada dato encontrado."""
+            # También obtener descripción para más contexto
+            caption = self._get_detailed_caption(image)
+            logger.info(f"Caption: {caption}")
 
-            # Obtener respuesta del modelo
-            response = self._chat(image, prompt)
-            logger.info(f"Respuesta del modelo: {response}")
+            # Combinar textos para análisis
+            combined_text = f"{ocr_text} {caption}"
 
-            # Extraer datos estructurados del texto
-            monto, moneda = self._extract_amount(response)
-            fecha = self._extract_date(response)
-            numero_operacion = self._extract_operation_number(response)
-            banco = self._detect_bank(response)
-            documento = self._extract_document(response)
-
-            # Si no se encontró monto, hacer pregunta específica
-            if monto is None:
-                amount_response = self._chat(image, "¿Cuál es el monto total exacto de este voucher? Responde solo con el número y la moneda.")
-                logger.info(f"Respuesta de monto: {amount_response}")
-                monto, moneda = self._extract_amount(amount_response)
-                response += f"\n{amount_response}"
+            # Extraer datos estructurados
+            monto, moneda = self._extract_amount(combined_text)
+            fecha = self._extract_date(combined_text)
+            numero_operacion = self._extract_operation_number(combined_text)
+            banco = self._detect_bank(combined_text)
+            documento = self._extract_document(combined_text)
 
             processing_time = int((time.time() - start_time) * 1000)
 
@@ -356,7 +320,7 @@ Responde de forma estructurada con cada dato encontrado."""
                 numero_operacion=numero_operacion,
                 banco=banco,
                 documento=documento,
-                texto_completo=response
+                texto_completo=ocr_text
             )
 
             # Validar monto si se proporcionó
@@ -378,7 +342,7 @@ Responde de forma estructurada con cada dato encontrado."""
 
     def _validate_amount(self, expected: float, extracted: float) -> ValidationResult:
         """Valida si el monto extraído coincide con el esperado"""
-        tolerance = 1.00  # 1 sol de tolerancia
+        tolerance = 1.00
         difference = abs(extracted - expected)
         matches = difference <= tolerance
 
@@ -413,4 +377,4 @@ Responde de forma estructurada con cada dato encontrado."""
 
 
 # Singleton instance
-vision_service = InternVL2Service()
+vision_service = Florence2Service()

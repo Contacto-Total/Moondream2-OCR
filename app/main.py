@@ -19,8 +19,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-VERSION = "2.0.0"
-MODEL_NAME = "InternVL2-1B"
+VERSION = "3.0.0"
+MODEL_NAME = "Florence-2-base"
 
 
 @asynccontextmanager
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Vision OCR Service",
-    description=f"Servicio de analisis de vouchers/boletas usando {MODEL_NAME}",
+    description=f"Servicio de analisis de vouchers/boletas usando {MODEL_NAME} (~1GB RAM)",
     version=VERSION,
     lifespan=lifespan
 )
