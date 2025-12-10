@@ -1,54 +1,56 @@
-# Moondream2 OCR Service
+# Vision OCR Service - InternVL2-1B
 
-Microservicio de analisis de vouchers/boletas de pago usando el modelo de vision Moondream2.
+Servicio de análisis de vouchers/boletas de pago usando el modelo de visión InternVL2-1B.
 
-## Caracteristicas
+## Características
 
-- Analisis de imagenes de vouchers/boletas
-- Extraccion automatica de: monto, fecha, numero de operacion, banco
-- Validacion contra monto esperado
+- Extracción automática de datos de vouchers:
+  - Monto y moneda
+  - Fecha de operación
+  - Número de operación/referencia
+  - Banco o entidad financiera
+  - Documento/DNI del pagador
+- Validación de monto contra valor esperado
+- Validación de documento contra valor esperado
 - API REST con FastAPI
-- Funciona en CPU (no requiere GPU)
+- Soporte para imágenes en base64 y upload directo
+- Endpoint para preguntas libres sobre imágenes
 
-## Requisitos
+## Requisitos del Sistema
 
 - Python 3.11+
-- 4GB RAM minimo (recomendado 8GB)
-- Docker (opcional, para despliegue)
+- ~2-3GB RAM disponible
+- ~2GB espacio en disco (modelo + dependencias)
 
-## Instalacion Local
+## Instalación Local
 
 ```bash
 # Crear entorno virtual
 python -m venv venv
-
-# Activar entorno
-# Windows:
-venv\Scripts\activate
-# Linux/Mac:
-source venv/bin/activate
+source venv/bin/activate  # Linux/Mac
+# o en Windows: venv\Scripts\activate
 
 # Instalar dependencias
 pip install -r requirements.txt
 
-# Ejecutar
-python -m uvicorn app.main:app --host 0.0.0.0 --port 5001
+# Ejecutar servicio
+uvicorn app.main:app --host 0.0.0.0 --port 5002
 ```
 
-## Despliegue con Docker
+## Instalación con Docker
 
 ```bash
 # Construir imagen
 docker-compose build
 
-# Ejecutar
+# Ejecutar servicio
 docker-compose up -d
 
 # Ver logs
-docker-compose logs -f
+docker-compose logs -f vision-ocr
 ```
 
-## API Endpoints
+## Endpoints
 
 ### Health Check
 ```
@@ -59,7 +61,8 @@ Respuesta:
 {
   "status": "healthy",
   "model_loaded": true,
-  "version": "1.0.0"
+  "model_name": "InternVL2-1B",
+  "version": "2.0.0"
 }
 ```
 
@@ -69,8 +72,9 @@ POST /api/analyze-voucher
 Content-Type: application/json
 
 {
-  "image_base64": "...",
-  "expected_amount": 150.00  // opcional
+  "image_base64": "base64_encoded_image",
+  "expected_amount": 150.00,
+  "expected_document": "12345678"
 }
 ```
 
@@ -79,60 +83,68 @@ Content-Type: application/json
 POST /api/analyze-voucher/upload
 Content-Type: multipart/form-data
 
-file: <archivo de imagen>
-expected_amount: 150.00  // opcional
+file: [imagen]
+expected_amount: 150.00 (opcional)
+expected_document: 12345678 (opcional)
 ```
 
-### Respuesta
+### Pregunta Libre sobre Imagen
+```
+POST /api/ask
+Content-Type: multipart/form-data
+
+file: [imagen]
+question: "¿Cuál es el monto total?"
+```
+
+## Respuesta de Análisis
+
 ```json
 {
   "success": true,
   "data": {
     "monto": 150.00,
     "moneda": "PEN",
-    "fecha": "05/12/2024",
-    "numero_operacion": "123456789",
+    "fecha": "10/12/2024",
+    "numero_operacion": "12345678",
     "banco": "BCP",
-    "texto_completo": "..."
+    "documento": "12345678",
+    "texto_completo": "Respuesta completa del modelo..."
   },
-  "validation": {
-    "expected_amount": 150.00,
-    "extracted_amount": 150.00,
-    "matches": true,
-    "difference": 0.0
+  "validacion_monto": {
+    "coincide": true,
+    "valor_esperado": "150.0",
+    "valor_extraido": "150.0",
+    "diferencia": 0.0,
+    "mensaje": "El monto coincide"
   },
-  "processing_time_ms": 15234
+  "validacion_documento": {
+    "coincide": true,
+    "valor_esperado": "12345678",
+    "valor_extraido": "12345678",
+    "mensaje": "El documento coincide"
+  },
+  "processing_time_ms": 1234
 }
 ```
 
-## Integracion con Backend Java
+## Modelo Utilizado
 
-Ejemplo de llamada desde Spring Boot:
+**InternVL2-1B** de OpenGVLab
+- Modelo de visión multimodal ligero
+- ~1GB de RAM en uso activo
+- Capacidad de responder preguntas sobre imágenes
+- Buena extracción de texto y números
 
-```java
-@Service
-public class VoucherValidationService {
+## Configuración
 
-    private final RestTemplate restTemplate;
-    private final String ocrServiceUrl = "http://localhost:5001";
+Variables de entorno:
+- `PYTHONUNBUFFERED`: Activar logs en tiempo real
+- `TRANSFORMERS_CACHE`: Directorio de caché del modelo
 
-    public VoucherAnalysisResponse analyzeVoucher(String imageBase64, Double expectedAmount) {
-        String url = ocrServiceUrl + "/api/analyze-voucher";
+## Notas de Despliegue
 
-        Map<String, Object> request = new HashMap<>();
-        request.put("image_base64", imageBase64);
-        if (expectedAmount != null) {
-            request.put("expected_amount", expectedAmount);
-        }
-
-        return restTemplate.postForObject(url, request, VoucherAnalysisResponse.class);
-    }
-}
-```
-
-## Notas
-
-- El modelo se descarga automaticamente la primera vez (~2GB)
-- El primer request puede tardar mas mientras el modelo se inicializa
-- Tiempo de procesamiento tipico: 10-20 segundos por imagen en CPU
-- Soporta formatos: JPG, PNG, WebP, GIF
+1. La primera ejecución descargará el modelo (~2GB)
+2. El modelo se cachea en `/root/.cache/huggingface`
+3. El healthcheck tiene `start_period: 180s` para dar tiempo a la carga inicial
+4. Límite de memoria: 3GB (configurable en docker-compose.yml)

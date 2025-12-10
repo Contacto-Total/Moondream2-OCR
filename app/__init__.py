@@ -1,1 +1,1 @@
-# Moondream2 OCR Service
+# InternVL2 OCR Service

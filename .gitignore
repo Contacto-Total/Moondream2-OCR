@@ -35,7 +35,7 @@ ENV/
 .env
 .env.local
 
-# Model cache (only root level, not app/models)
+# Model cache (only root level)
 /models/
 .cache/
 huggingface/
